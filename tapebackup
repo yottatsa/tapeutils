@@ -1,0 +1,66 @@
+#!/bin/sh -eu
+#dump -h 0 -u -a -b 256 -f /dev/nst0 -j9 -Q /tmp/root.qfa -0 /dev/mapper/box-root_ubuntu
+DUMPOPTS="-j9"
+TAPE="/dev/nst0"
+
+usage() {
+	echo "Usage: $(basename "${0}") [-t ${TAPE}] -[0-9] TARGET [...]"
+}
+
+while getopts ":h0123456789t:" opt; do
+	case ${opt} in
+		[0-9] ) LEVEL="$opt" ;;
+		t ) TAPE="$OPTARG" ;;
+		h ) usage ; exit 0; ;;
+		? ) echo "Invalid Option: -$OPTARG" 1>&2; usage 1>&2;  exit 1; ;;
+	esac
+done
+shift $((OPTIND -1))
+
+if [ -z "${TAPE:-}" ]
+then
+	echo "Tape is required" 1>&2; usage 1>&2;
+	exit 1
+fi
+
+if [ -z "${*:-}" ]
+then
+	echo "Target is required\n" 1>&2
+	dump -W 1>&2	
+	echo 1>&2
+	usage 1>&2
+	exit 1
+fi
+
+if [ -z "${LEVEL:-}" ]
+then
+	echo "Level is required\n" 1>&2
+	dump -W 1>&2	
+	echo 1>&2
+	usage 1>&2
+	exit 1
+fi
+
+tell() {
+	mt -f "${TAPE}" tell | grep -o '[0-9]*'
+}
+
+for target
+do
+	target_name="$(basename "${target}")"
+	slug="${target_name##*-}"
+	qfa="${slug}.qfa"
+
+	pos="$(tell)"
+	shtool rotate "${qfa}"
+	dump -h 0 -u -a -b 256 ${DUMPOPTS:-} -f "${TAPE}" -Q "${qfa}" "-${LEVEL}" "${target}"
+	
+	tmptape="$(mktemp tape.XXXXXXXXXX)"
+	(
+		grep -v -e "^${pos}\s" tape
+		echo "${pos} dump ${slug} ${DUMPOPTS:-}"
+		echo "$(tell) EOT"
+	) > "${tmptape}"
+	shtool rotate tape
+	mv "${tmptape}" tape
+done

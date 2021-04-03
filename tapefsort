@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import sys
+import logging
+import argparse
+from itertools import chain as ichain
+import xattr
+from typing import Collection, NamedTuple, Optional, Tuple
+
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+
+def recurse(root: str) -> Collection[str]:
+    pass
+
+
+class LtfsEntry(NamedTuple):
+    filename: str
+    startblock: int
+    mam_barcode: str
+
+    @staticmethod
+    def sortkey(item: "LtfsEntry") -> Tuple[str, int]:
+        return (item.mam_barcode, item.startblock)
+
+
+def ltfs_attrs(filename: str) -> Optional[LtfsEntry]:
+    try:
+        startblock = xattr.getxattr(filename, "user.ltfs.startblock")
+        mam_barcode = xattr.getxattr(filename, "user.ltfs.mamBarcode")
+    except OSError as e:
+        if e.errno == 61:
+            logger.error("xattr: %s, %s", filename, e)
+            return
+        raise e
+
+    if startblock and mam_barcode:
+        return LtfsEntry(
+            filename=filename,
+            startblock=int(startblock),
+            mam_barcode=mam_barcode.strip(),
+        )
+
+
+def main(debug: bool = False) -> None:
+    parser = argparse.ArgumentParser(description="tape files sort")
+    parser.add_argument("target", nargs="+")
+    parser.add_argument("-0", "--zero", action="store_true", default=False)
+    parser.add_argument("--debug", action="store_true", default=debug)
+    # parser.add_argument(
+    #     "-R",
+    #     "--recursive",
+    #     help="treat input as directories and recurse",
+    #     action="store_true",
+    #     default=False,
+    # )
+
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.ERROR)
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+
+    if args.zero:
+        end = "\0"
+    else:
+        end = "\n"
+
+    # if args.recursive:
+    #     dirs = filter(os.path.isdir, args.target)
+    #     files = ichain(recurse(d) for d in dirs)
+    if len(args.target) == 1 and args.target[0] == "-":
+        if args.zero:
+            lines = sys.stdin.read().split("\0")
+        else:
+            lines = map(str.strip, sys.stdin.readlines())
+        files = filter(os.path.isfile, lines)
+    else:
+        files = filter(os.path.isfile, args.target)
+
+    attrs = filter(bool, map(ltfs_attrs, files))
+    sorted_attrs = sorted(attrs, key=LtfsEntry.sortkey)
+
+    for f in sorted_attrs:
+        logger.debug("# %s %15d %s", f.mam_barcode, f.startblock, f.filename)
+        sys.stdout.write(f"{f.filename}{end}")
+
+
+if __name__ == "__main__":
+    main()

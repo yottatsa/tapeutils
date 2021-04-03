@@ -1,0 +1,22 @@
+#!/bin/sh -eu
+NAME="$(basename "${0}")"
+SGTAPE="$(sdparm --command=sense /dev/sg* 2>/dev/null | grep tape | cut -d: -f1 | tr -d ' ')"
+#SGTAPE="/dev/nst0"
+
+LABEL="$(basename "$(lto-cm  -f "${SGTAPE}" -r | tr -d ' ')")"
+TARGET="/mnt/${LABEL}"
+UNITNAME="ltfs_${LABEL}"
+
+if ! /usr/bin/test -w "${TARGET}"
+then
+	echo "${NAME}: ${TARGET} does not exist or not writable" 1>&2
+	exit 1
+fi
+if mountpoint -q "${TARGET}"
+then
+	echo "${NAME}: ${TARGET} is already mounted" 1>&2
+	exit 1
+else
+	systemd-run --quiet --user --collect -u "${UNITNAME}" ltfs -f -o eject -o allow_other -o auto_unmount -o gid=27 -o umask=002 "${TARGET}"
+	echo "${TARGET}"
+fi
