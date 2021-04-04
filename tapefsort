@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
 
+"""
+tapefsort(1) - order files by ltfs.mamBarcode and ltfs.startblock to aid sequential reading
+
+usage: tapefsort [-h] [-0] [--debug] [-] [file [file ...]]
+
+positional arguments:
+  file            files to sort
+
+optional arguments:
+  -h, --help      show this help message and exit
+  -0, --zero
+  --debug
+  -, -S, --stdin  read files from stdin
+
+e.g. find /mnt/tape | tapefsort - | xargs sha256sum
+"""
+
 import os
 import subprocess
 import sys
@@ -13,11 +30,11 @@ from typing import Collection, NamedTuple, Optional, Tuple
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def recurse(root: str) -> Collection[str]:
-    pass
-
-
 class LtfsEntry(NamedTuple):
+    """
+    Storage class.
+    """
+
     filename: str
     startblock: int
     mam_barcode: str
@@ -26,37 +43,44 @@ class LtfsEntry(NamedTuple):
     def sortkey(item: "LtfsEntry") -> Tuple[str, int]:
         return (item.mam_barcode, item.startblock)
 
+    @classmethod
+    def from_file(cls, filename: str) -> Optional["LtfsEntry"]:
+        """
+        Constructor
+        """
+        try:
+            startblock = xattr.getxattr(filename, "user.ltfs.startblock")
+            mam_barcode = xattr.getxattr(filename, "user.ltfs.mamBarcode")
+        except OSError as e:
+            if e.errno == 61:
+                logger.error("xattr: %s, %s", filename, e)
+                return
+            raise e
 
-def ltfs_attrs(filename: str) -> Optional[LtfsEntry]:
-    try:
-        startblock = xattr.getxattr(filename, "user.ltfs.startblock")
-        mam_barcode = xattr.getxattr(filename, "user.ltfs.mamBarcode")
-    except OSError as e:
-        if e.errno == 61:
-            logger.error("xattr: %s, %s", filename, e)
-            return
-        raise e
-
-    if startblock and mam_barcode:
-        return LtfsEntry(
-            filename=filename,
-            startblock=int(startblock),
-            mam_barcode=mam_barcode.strip(),
-        )
+        if startblock and mam_barcode:
+            return LtfsEntry(
+                filename=filename,
+                startblock=int(startblock),
+                mam_barcode=mam_barcode.strip(),
+            )
 
 
 def main(debug: bool = False) -> None:
-    parser = argparse.ArgumentParser(description="tape files sort")
-    parser.add_argument("target", nargs="+")
+    """
+    Parse arguments, sort, and print output.
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "order files by ltfs.mamBarcode and "
+            "ltfs.startblock to aid sequential reading"
+        )
+    )
     parser.add_argument("-0", "--zero", action="store_true", default=False)
     parser.add_argument("--debug", action="store_true", default=debug)
-    # parser.add_argument(
-    #     "-R",
-    #     "--recursive",
-    #     help="treat input as directories and recurse",
-    #     action="store_true",
-    #     default=False,
-    # )
+    parser.add_argument(
+        "-", "-S", "--stdin", action="store_true", help="read files from stdin"
+    )
+    parser.add_argument("file", nargs="*", help="files to sort")
 
     args = parser.parse_args()
 
@@ -74,19 +98,20 @@ def main(debug: bool = False) -> None:
     else:
         end = "\n"
 
-    # if args.recursive:
-    #     dirs = filter(os.path.isdir, args.target)
-    #     files = ichain(recurse(d) for d in dirs)
-    if len(args.target) == 1 and args.target[0] == "-":
+    if args.stdin and args.file:
+        raise ValueError("Either stdin or file should be enabled")
+    elif args.stdin:
         if args.zero:
             lines = sys.stdin.read().split("\0")
         else:
             lines = map(str.strip, sys.stdin.readlines())
         files = filter(os.path.isfile, lines)
+    elif args.file:
+        files = filter(os.path.isfile, args.file)
     else:
-        files = filter(os.path.isfile, args.target)
+        raise ValueError("Neither stdin nor file are specified")
 
-    attrs = filter(bool, map(ltfs_attrs, files))
+    attrs = filter(bool, map(LtfsEntry.from_file, files))
     sorted_attrs = sorted(attrs, key=LtfsEntry.sortkey)
 
     for f in sorted_attrs:
