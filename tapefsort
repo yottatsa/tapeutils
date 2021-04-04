@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 
 """
-tapefsort(1) - order files by ltfs.mamBarcode and ltfs.startblock to aid sequential reading
+Name
+----
+`tapefsort(1)` - order files by `ltfs.mamBarcode` and `ltfs.startblock` to aid sequential reading
 
-usage: tapefsort [-h] [-0] [--debug] [-] [file [file ...]]
+Synopsis
+--------
 
-positional arguments:
-  file            files to sort
+    tapefsort [-h] [--debug] [-0] (- | file [file ...])
 
-optional arguments:
-  -h, --help      show this help message and exit
-  -0, --zero
-  --debug
-  -, -S, --stdin  read files from stdin
+Options
+-------
 
-e.g. find /mnt/tape | tapefsort - | xargs sha256sum
+    positional arguments:
+    file            files to sort
+
+    optional arguments:
+    -h, --help      show this help message and exit
+    --debug
+    -0, --null      items are terminated by a null character instead of by new line
+    -, -S, --stdin  read files from standard input
+
+Examples
+--------
+
+    find /mnt/tape | tapefsort - | xargs sha256sum
 """
 
 import os
@@ -22,7 +33,6 @@ import subprocess
 import sys
 import logging
 import argparse
-from itertools import chain as ichain
 import xattr
 from typing import Collection, NamedTuple, Optional, Tuple
 
@@ -53,7 +63,7 @@ class LtfsEntry(NamedTuple):
             mam_barcode = xattr.getxattr(filename, "user.ltfs.mamBarcode")
         except OSError as e:
             if e.errno == 61:
-                logger.error("xattr: %s, %s", filename, e)
+                logger.warning("xattr: %s, %s", filename, e)
                 return
             raise e
 
@@ -75,12 +85,19 @@ def main(debug: bool = False) -> None:
             "ltfs.startblock to aid sequential reading"
         )
     )
-    parser.add_argument("-0", "--zero", action="store_true", default=False)
     parser.add_argument("--debug", action="store_true", default=debug)
     parser.add_argument(
-        "-", "-S", "--stdin", action="store_true", help="read files from stdin"
+        "-0",
+        "--null",
+        action="store_true",
+        default=False,
+        help="items are terminated by a null character instead of by new line",
     )
-    parser.add_argument("file", nargs="*", help="files to sort")
+    group_input = parser.add_mutually_exclusive_group(required=True)
+    group_input.add_argument(
+        "-", "-S", "--stdin", action="store_true", help="read files from standard input"
+    )
+    group_input.add_argument("file", nargs="*", help="files to sort", default=[])
 
     args = parser.parse_args()
 
@@ -93,23 +110,23 @@ def main(debug: bool = False) -> None:
         level=logging.INFO,
     )
 
-    if args.zero:
+    if args.null:
         end = "\0"
     else:
         end = "\n"
 
-    if args.stdin and args.file:
-        raise ValueError("Either stdin or file should be enabled")
-    elif args.stdin:
-        if args.zero:
+    if args.stdin:
+        if args.null:
             lines = sys.stdin.read().split("\0")
         else:
+            # not a canonical xargs-like behaviour
             lines = map(str.strip, sys.stdin.readlines())
         files = filter(os.path.isfile, lines)
     elif args.file:
         files = filter(os.path.isfile, args.file)
     else:
-        raise ValueError("Neither stdin nor file are specified")
+        parser.print_help()
+        sys.exit(1)
 
     attrs = filter(bool, map(LtfsEntry.from_file, files))
     sorted_attrs = sorted(attrs, key=LtfsEntry.sortkey)
