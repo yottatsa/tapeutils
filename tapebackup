@@ -1,6 +1,6 @@
 #!/bin/sh -eu
 #dump -h 0 -u -a -b 256 -f /dev/nst0 -j9 -Q /tmp/root.qfa -0 /dev/mapper/box-root_ubuntu
-DUMPOPTS="-j9"
+DUMPOPTS=""
 TAPE="/dev/nst0"
 
 usage() {
@@ -26,7 +26,7 @@ fi
 if [ -z "${*:-}" ]
 then
 	echo "Target is required\n" 1>&2
-	dump -W 1>&2	
+	dump -w 1>&2	
 	echo 1>&2
 	usage 1>&2
 	exit 1
@@ -35,7 +35,7 @@ fi
 if [ -z "${LEVEL:-}" ]
 then
 	echo "Level is required\n" 1>&2
-	dump -W 1>&2	
+	dump -w 1>&2	
 	echo 1>&2
 	usage 1>&2
 	exit 1
@@ -47,18 +47,20 @@ tell() {
 
 for target
 do
+	pos="$( (grep EOT tape || echo "0 EOT") | cut -d " " -f1 )"
+	mt -f "${TAPE}" seek "${pos}"
+
 	target_name="$(basename "${target}")"
 	slug="${target_name##*-}"
-	qfa="${slug}.qfa"
-
 	pos="$(tell)"
-	shtool rotate "${qfa}"
+	qfa="${slug}-${pos}.qfa"
+
 	dump -h 0 -u -a -b 256 ${DUMPOPTS:-} -f "${TAPE}" -Q "${qfa}" "-${LEVEL}" "${target}"
 	
 	tmptape="$(mktemp tape.XXXXXXXXXX)"
 	(
 		grep -v -e "^${pos}\s" tape
-		echo "${pos} dump ${slug} ${DUMPOPTS:-}"
+		echo "${pos} dump ${slug} ${LEVEL:-} ${DUMPOPTS:-}"
 		echo "$(tell) EOT"
 	) > "${tmptape}"
 	shtool rotate tape
