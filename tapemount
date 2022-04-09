@@ -18,5 +18,9 @@ then
 	exit 1
 else
 	systemd-run --quiet --user --collect -u "${UNITNAME}" ltfs -f -o eject -o allow_other -o auto_unmount -o gid=27 -o umask=002 "${TARGET}"
+	while ! mountpoint "${TARGET}" >&2
+	do
+		sleep 1
+	done
 	echo "${TARGET}"
 fi
